@@ -9,8 +9,12 @@
 
 #if __SSE2__
 # include <emmintrin.h>
-#elif __ARM_NEON__
+#elif defined(__ARM_NEON__) || (defined(SCHUR_OPT_HALFSAMPLE_NEON) && SCHUR_OPT_HALFSAMPLE_NEON)
 # include <arm_neon.h>
+#endif
+
+#if defined(SCHUR_OPT_HALFSAMPLE_NEON) && SCHUR_OPT_HALFSAMPLE_NEON && !defined(__aarch64__)
+#error "SCHUR_OPT_HALFSAMPLE_NEON requires AArch64"
 #endif
 
 namespace vk {
@@ -74,6 +78,28 @@ halfSample(const cv::Mat& in, cv::Mat& out)
 {
   assert( in.rows/2==out.rows && in.cols/2==out.cols);
   assert( in.type()==CV_8U && out.type()==CV_8U);
+
+#if defined(SCHUR_OPT_HALFSAMPLE_NEON) && SCHUR_OPT_HALFSAMPLE_NEON
+  // Exact box average, including arbitrary ROI strides and odd input sizes.
+  for (int y = 0; y < out.rows; ++y) {
+    const uint8_t* a = in.ptr<uint8_t>(2*y);
+    const uint8_t* b = in.ptr<uint8_t>(2*y+1);
+    uint8_t* dst = out.ptr<uint8_t>(y);
+    int x = 0;
+    for (; x + 8 <= out.cols; x += 8) {
+      const uint8x8x2_t top = vld2_u8(a + 2*x);
+      const uint8x8x2_t bottom = vld2_u8(b + 2*x);
+      uint16x8_t sum = vaddl_u8(top.val[0], top.val[1]);
+      sum = vaddw_u8(sum, bottom.val[0]);
+      sum = vaddw_u8(sum, bottom.val[1]);
+      vst1_u8(dst+x, vshrn_n_u16(sum, 2));
+    }
+    for (; x < out.cols; ++x)
+      dst[x] = (unsigned(a[2*x]) + a[2*x+1] + b[2*x] + b[2*x+1]) >> 2;
+  }
+  return;
+#endif
+
 
 #ifdef __SSE2__
   // TODO: make work for cropped images
