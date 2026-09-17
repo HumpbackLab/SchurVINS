@@ -12,6 +12,7 @@
 #include <numeric>
 
 #include <fast/fast.h>
+#include <svo/direct/fast10_neon.h>
 #include <vikit/vision.h>
 #include <opencv2/imgproc/imgproc.hpp>
 #include <opencv2/highgui/highgui.hpp>
@@ -158,7 +159,10 @@ void fastDetector(
   {
     const int scale = (1<<level);
     std::vector<fast::fast_xy> fast_corners;
-#if __SSE2__
+#if defined(SCHUR_OPT_FAST10_NEON) && SCHUR_OPT_FAST10_NEON
+    fast10DetectNEON(img_pyr[level].data, img_pyr[level].cols,
+                    img_pyr[level].rows, img_pyr[level].step, threshold, fast_corners);
+#elif __SSE2__
     fast::fast_corner_detect_10_sse2(
           (fast::fast_byte*) img_pyr[level].data, img_pyr[level].cols,
           img_pyr[level].rows, img_pyr[level].step, threshold, fast_corners);
@@ -172,8 +176,12 @@ void fastDetector(
           img_pyr[level].rows, img_pyr[level].step, threshold, fast_corners);
 #endif
     std::vector<int> scores, nm_corners;
+#if defined(SCHUR_OPT_FAST10_NEON) && SCHUR_OPT_FAST10_NEON
+    fast10ScoreNEON(img_pyr[level].data, img_pyr[level].step, fast_corners, threshold, scores);
+#else
     fast::fast_corner_score_10((fast::fast_byte*) img_pyr[level].data, img_pyr[level].step,
                                fast_corners, threshold, scores);
+#endif
     fast::fast_nonmax_3x3(fast_corners, scores, nm_corners);
 
     const int maxw = img_pyr[level].cols-border;
