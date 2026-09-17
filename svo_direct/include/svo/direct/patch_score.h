@@ -10,10 +10,14 @@
 
 #include <svo/common/types.h>
 
+#if defined(SCHUR_OPT_ZMSSD_NEON) && SCHUR_OPT_ZMSSD_NEON && !defined(__aarch64__)
+#error "SCHUR_OPT_ZMSSD_NEON requires AArch64"
+#endif
+
 #if __SSSE3__
 # include <tmmintrin.h>
 #endif
-#ifdef __ARM_NEON__
+#if defined(__ARM_NEON__) || (defined(SCHUR_OPT_ZMSSD_NEON) && SCHUR_OPT_ZMSSD_NEON)
 # include <arm_neon.h>
 #endif
 
@@ -53,8 +57,12 @@ public:
   ZMSSD(uint8_t* ref_patch) :
     ref_patch_(ref_patch)
   {
-#ifdef __ARM_NEON__
+#if defined(__ARM_NEON__) || (defined(SCHUR_OPT_ZMSSD_NEON) && SCHUR_OPT_ZMSSD_NEON)
+#if defined(SCHUR_OPT_ZMSSD_NEON) && SCHUR_OPT_ZMSSD_NEON
+    if(patch_size_ == 8)
+#else
     if(patch_size_ == 0)
+#endif
     {
       uint16x8_t tpl_x8;
       uint16x8_t sumAx8  = vdupq_n_u16(0);
@@ -92,6 +100,9 @@ public:
 
   int computeScore(uint8_t* cur_patch) const
   {
+#if defined(SCHUR_OPT_ZMSSD_NEON) && SCHUR_OPT_ZMSSD_NEON
+    if (patch_size_ == 8) return computeScore(cur_patch, patch_size_);
+#endif
     uint32_t sumB_uint = 0;
     uint32_t sumBB_uint = 0;
     uint32_t sumAB_uint = 0;
@@ -225,7 +236,7 @@ public:
     }
     else
 #endif
-#ifdef __ARM_NEON__
+#if defined(__ARM_NEON__) || (defined(SCHUR_OPT_ZMSSD_NEON) && SCHUR_OPT_ZMSSD_NEON)
     if(patch_size_ == 8)
     {
       uint16x8_t img_x8, tpl_x8;
