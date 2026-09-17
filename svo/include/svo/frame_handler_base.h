@@ -19,7 +19,9 @@
 #include <vikit/timer.h>
 #include <vikit/ringbuffer.h>
 
+#ifdef SVO_USE_ROS
 #include <vikit/params_helper.h>
+#endif
 #include <vikit/cameras/ncamera.h>
 #include <rpg_common/callback_host.h>
 

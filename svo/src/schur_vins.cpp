@@ -18,7 +18,6 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 #include <svo/schur_vins.h>
 
 #include <boost/math/distributions/chi_squared.hpp>
-#include <opencv2/optflow.hpp>
 #include <sstream>
 #include <unordered_map>
 #include <unordered_set>
