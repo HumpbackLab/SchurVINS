@@ -38,6 +38,15 @@ class SchurVINS {
     void InitObsStddev(double _obs_dev);
     void InitChi2(double chi2_rate);
 
+    // Copy only on the estimator thread, after a completed visual update.
+    struct ImuSnapshot {
+        EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+        double timestamp;
+        Eigen::Quaterniond orientation;
+        Eigen::Vector3d position, velocity, accel_bias, gyro_bias, gravity;
+    };
+    bool getImuSnapshot(ImuSnapshot& snapshot) const;
+
     void SetKeyframe(const bool _is_keyframe);
     void Forward(const svo::FrameBundle::Ptr frame_bundle);
     int Backward(const svo::FrameBundle::Ptr frame_bundle);

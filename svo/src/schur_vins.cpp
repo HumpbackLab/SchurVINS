@@ -28,6 +28,18 @@ SchurVINS::SchurVINS() : curr_state(new ImuState()) {
     // LOG(INFO) << "init begins";
 }
 
+bool SchurVINS::getImuSnapshot(ImuSnapshot& s) const {
+    if (!curr_state || curr_state->ts < 0) return false;
+    s.timestamp = curr_state->ts;
+    s.orientation = curr_state->quat;
+    s.position = curr_state->pos;
+    s.velocity = curr_state->vel;
+    s.accel_bias = curr_state->ba;
+    s.gyro_bias = curr_state->bg;
+    s.gravity = gravity;
+    return true;
+}
+
 void SchurVINS::InitCov() {
     double quat_cov = 0.0001;
     double pos_cov = 0.001;
