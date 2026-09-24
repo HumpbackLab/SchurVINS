@@ -893,7 +893,11 @@ int SchurVINS::RemoveOutliers(const svo::FrameBundle::Ptr frame_bundle) {
                 total_error += r.norm();
 
                 if (r.norm() > MAX_REPROJECT_ERROR) {
-                    // curr_pt->RemoveLocalObs(state->id, frame->getNFrameIndex());
+#if defined(SCHUR_SYNC_OUTLIER_OBSERVATIONS) && SCHUR_SYNC_OUTLIER_OBSERVATIONS
+                    // Reject this state/camera observation in both representations.
+                    // Keep the point's other observations for subsequent solves.
+                    curr_pt->RemoveLocalObs(state->id, frame->getNFrameIndex());
+#endif
                     frame->type_vec_[i] = svo::FeatureType::kOutlier;
                     frame->seed_ref_vec_[i].keyframe.reset();
                     frame->landmark_vec_[i] = nullptr;  // delete landmark observation
