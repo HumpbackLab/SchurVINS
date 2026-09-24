@@ -154,6 +154,37 @@ bool warpAffine(
       const float32x4_t row_y = vdupq_n_f32(A_ref_cur(1,1)*y);
       for(int x=-5; x<5; x+=4)
       {
+#if defined(SCHUR_OPT_WARP_TAIL2) && SCHUR_OPT_WARP_TAIL2
+        if(x==3)
+        {
+          const float32x2_t xv=vadd_f32(vget_low_f32(vld1q_f32(xs)),vdup_n_f32(8.0f));
+          const float32x2_t px=vadd_f32(vfma_n_f32(vget_low_f32(row_x),xv,A_ref_cur(0,0)),vdup_n_f32(px_ref_pyr[0]));
+          const float32x2_t py=vadd_f32(vfma_n_f32(vget_low_f32(row_y),xv,A_ref_cur(1,0)),vdup_n_f32(px_ref_pyr[1]));
+          const int32x2_t ix=vcvtm_s32_f32(px), iy=vcvtm_s32_f32(py);
+          const uint32x2_t valid=vand_u32(vand_u32(vcge_s32(ix,vdup_n_s32(0)),vcge_s32(iy,vdup_n_s32(0))),
+              vand_u32(vclt_s32(ix,vdup_n_s32(img_ref.cols-1)),vclt_s32(iy,vdup_n_s32(img_ref.rows-1))));
+          if(vget_lane_u32(vpmin_u32(valid,valid),0)==0) goto scalar_warp;
+          const uint8_t* p0=img_ref.data+vget_lane_s32(iy,0)*stride+vget_lane_s32(ix,0);
+          const uint8_t* p1=img_ref.data+vget_lane_s32(iy,1)*stride+vget_lane_s32(ix,1);
+          const auto pair=[](const uint8_t* p)->uint16_t {return p[0]|(uint16_t(p[1])<<8);};
+          uint16x4_t top=vdup_n_u16(pair(p0)),bottom=vdup_n_u16(pair(p0+stride));
+          top=vset_lane_u16(pair(p1),top,1);bottom=vset_lane_u16(pair(p1+stride),bottom,1);
+          const uint32x2_t t=vget_low_u32(vmovl_u16(top)), b=vget_low_u32(vmovl_u16(bottom)), mask=vdup_n_u32(255);
+          const float32x2_t tl=vcvt_f32_u32(vand_u32(t,mask)), tr=vcvt_f32_u32(vshr_n_u32(t,8));
+          const float32x2_t bl=vcvt_f32_u32(vand_u32(b,mask)), br=vcvt_f32_u32(vshr_n_u32(b,8));
+          const float32x2_t sx=vsub_f32(px,vcvt_f32_s32(ix)), sy=vsub_f32(py,vcvt_f32_s32(iy)), one2=vdup_n_f32(1.0f);
+          const float32x2_t w00=vmul_f32(vsub_f32(one2,sx),vsub_f32(one2,sy));
+          const float32x2_t w01=vmul_f32(vsub_f32(one2,sx),sy), w10=vmul_f32(sx,vsub_f32(one2,sy));
+          const float32x2_t w11=vsub_f32(vsub_f32(vsub_f32(one2,w00),w01),w10);
+          float32x2_t value=vfma_f32(vmul_f32(w01,bl),w00,tl);
+          value=vfma_f32(value,w10,tr);value=vfma_f32(value,w11,br);
+          const uint32x2_t out=vcvt_u32_f32(value);
+          patch_ptr[0]=static_cast<uint8_t>(vget_lane_u32(out,0));
+          patch_ptr[1]=static_cast<uint8_t>(vget_lane_u32(out,1));
+          patch_ptr+=2;
+          continue;
+        }
+#endif
         const int count = x == 3 ? 2 : 4;
         const float32x4_t xv = vaddq_f32(vld1q_f32(xs), vdupq_n_f32(x+5));
         const float32x4_t px = vaddq_f32(vfmaq_n_f32(row_x, xv, A_ref_cur(0,0)), vdupq_n_f32(px_ref_pyr[0]));
