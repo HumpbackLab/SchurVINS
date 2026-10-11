@@ -113,6 +113,7 @@ UpdateResult FrameHandlerStereo::processFrame()
   n_tracked_features = projectMapInFrame();
   if(n_tracked_features < options_.quality_min_fts)
   {
+    tracking_quality_ = TrackingQuality::kInsufficient;
     return makeKeyframe(); // force stereo triangulation to recover
   }
 
@@ -122,6 +123,7 @@ UpdateResult FrameHandlerStereo::processFrame()
     n_tracked_features = optimizePose();
     if(n_tracked_features < options_.quality_min_fts)
     {
+      tracking_quality_ = TrackingQuality::kInsufficient;
       return makeKeyframe(); // force stereo triangulation to recover
     }
     optimizeStructure(new_frames_, options_.structure_optimization_max_pts, 5);
