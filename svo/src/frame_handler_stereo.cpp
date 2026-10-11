@@ -23,8 +23,60 @@
 #include <svo/reprojector.h>
 #include <svo/initialization.h>
 #include <vikit/performance_monitor.h>
+#include <cmath>
+#include <cstdlib>
+#include <limits>
+#include <unordered_map>
 
 namespace svo {
+namespace {
+size_t rejectStereoEpipolarOutliers(const FrameBundlePtr& bundle,
+                                   double max_error_px) {
+  const FramePtr& left = bundle->at(0);
+  const FramePtr& right = bundle->at(1);
+  const Transformation T_right_left =
+      right->T_cam_world() * left->T_world_cam();
+  const Eigen::Matrix3d R = T_right_left.getRotationMatrix();
+  const Eigen::Vector3d t = T_right_left.getPosition();
+  const double focal = left->cam()->getIntrinsicParameters()[0];
+  std::unordered_map<int, size_t> left_index;
+  for (size_t i = 0; i < left->numFeatures(); ++i)
+    if (left->landmark_vec_[i])
+      left_index.emplace(left->landmark_vec_[i]->id(), i);
+
+  size_t rejected = 0;
+  for (size_t j = 0; j < right->numFeatures(); ++j)
+  {
+    const PointPtr& point = right->landmark_vec_[j];
+    if (!point)
+      continue;
+    const auto it = left_index.find(point->id());
+    if (it == left_index.end())
+      continue;
+    const size_t i = it->second;
+    if (!left->landmark_vec_[i])
+      continue;
+    const Eigen::Vector3d x0 = left->f_vec_.col(i) / left->f_vec_(2, i);
+    const Eigen::Vector3d x1 = right->f_vec_.col(j) / right->f_vec_(2, j);
+    const Eigen::Vector3d line1 = t.cross(R * x0);
+    const Eigen::Vector3d line0 = R.transpose() * x1.cross(t);
+    const double denominator = std::sqrt(
+        line0.head<2>().squaredNorm() + line1.head<2>().squaredNorm());
+    const double error_px = denominator > 1e-12
+        ? focal * std::abs(x1.dot(line1)) / denominator
+        : std::numeric_limits<double>::infinity();
+    if (!std::isfinite(error_px) || error_px > max_error_px)
+    {
+      left->type_vec_[i] = FeatureType::kOutlier;
+      right->type_vec_[j] = FeatureType::kOutlier;
+      left->landmark_vec_[i] = nullptr;
+      right->landmark_vec_[j] = nullptr;
+      ++rejected;
+    }
+  }
+  return rejected;
+}
+}
 
 FrameHandlerStereo::FrameHandlerStereo(
     const BaseOptions& base_options,
@@ -111,6 +163,16 @@ UpdateResult FrameHandlerStereo::processFrame()
 
   // STEP 2: Map Reprojection & Feature Align
   n_tracked_features = projectMapInFrame();
+  if (const char* value = std::getenv("SCHUR_STEREO_EPIPOLAR_PX"))
+  {
+    const double threshold_px = std::atof(value);
+    if (std::isfinite(threshold_px) && threshold_px > 0.0)
+    {
+      const size_t rejected = rejectStereoEpipolarOutliers(
+          new_frames_, threshold_px);
+      n_tracked_features -= std::min(n_tracked_features, rejected * 2);
+    }
+  }
   if(n_tracked_features < options_.quality_min_fts)
   {
     tracking_quality_ = TrackingQuality::kInsufficient;
