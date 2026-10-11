@@ -18,11 +18,23 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 #include <svo/schur_vins.h>
 
 #include <boost/math/distributions/chi_squared.hpp>
+#include <cmath>
+#include <cstdlib>
 #include <sstream>
 #include <unordered_map>
 #include <unordered_set>
 
 namespace schur_vins {
+namespace {
+double positiveEnv(const char* name) {
+    const char* value = std::getenv(name);
+    if (!value)
+        return 0.0;
+    const double parsed = std::atof(value);
+    return std::isfinite(parsed) && parsed > 0.0 ? parsed : 0.0;
+}
+
+}
 
 SchurVINS::SchurVINS() : curr_state(new ImuState()) {
     // LOG(INFO) << "init begins";
@@ -246,6 +258,7 @@ void SchurVINS::Solve3() {
     // compute local points jacobian
     int num_obs = 0;
     double total_error = 0.0;
+    const double pregate_px = positiveEnv("SCHUR_VISUAL_PREGATE_PX");
     schur_pts_.clear();
     for (svo::LocalPointMap::iterator pit = local_pts.begin(); pit != local_pts.end(); ++pit) {
         const svo::PointPtr& curr_pt = pit->second;
@@ -264,6 +277,35 @@ void SchurVINS::Solve3() {
             continue;
         }
 
+        if (pregate_px > 0.0) {
+            bool reject_point = false;
+            for (const auto& observation : curr_pt->local_obs_) {
+                const auto& feature = observation.second;
+                if (feature->frame->bundleId() != max_frame_idx)
+                    continue;
+                const auto state = feature->state.lock();
+                if (!state)
+                    continue;
+                const svo::Transformation& T_imu_cam =
+                    feature->camera_id == 0 ? T_imu_cam0 : T_imu_cam1;
+                const Eigen::Vector3d Pi = state->quat.inverse() *
+                    (curr_pt->pos() - state->pos);
+                const Eigen::Vector3d Pc = T_imu_cam.getEigenQuaternion().inverse() *
+                    (Pi - T_imu_cam.getPosition());
+                if (Pc.z() <= 0.0 || !Pc.allFinite()) {
+                    reject_point = true;
+                    break;
+                }
+                const Eigen::Vector2d residual =
+                    (feature->xyz.head<2>() - Pc.head<2>() / Pc.z()) * focal_length;
+                if (!residual.allFinite() || residual.norm() > pregate_px) {
+                    reject_point = true;
+                    break;
+                }
+            }
+            if (reject_point)
+                continue;
+        }
         schur_pts_.insert(curr_pt);
         const Eigen::Vector3d& Pw = curr_pt->pos();
 
@@ -365,6 +407,12 @@ void SchurVINS::Solve3() {
                                                          // LOG(INFO) << "gv:\n" << curr_pt->gv.transpose();
                                                          // LOG(INFO) << "W:\n" << ft->W;
         }
+    }
+
+    if (num_obs == 0) {
+        schur_pts_.clear();
+        dsw_ = Eigen::VectorXd::Zero(state_len);
+        return;
     }
 
     // combine point observation on same body
