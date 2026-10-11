@@ -34,6 +34,15 @@ double positiveEnv(const char* name) {
     return std::isfinite(parsed) && parsed > 0.0 ? parsed : 0.0;
 }
 
+double visualStddev(double base, double focal, double angular_rate) {
+    const double uncertainty_ms = positiveEnv("SCHUR_VISUAL_TIME_UNCERTAINTY_MS");
+    if (uncertainty_ms == 0.0)
+        return base;
+    const double onset = positiveEnv("SCHUR_VISUAL_RATE_START_RAD_S");
+    const double extra_px = focal * std::max(0.0, angular_rate - onset) *
+        uncertainty_ms * 1e-3;
+    return std::min(std::max(base, 6.0), std::hypot(base, extra_px));
+}
 }
 
 SchurVINS::SchurVINS() : curr_state(new ImuState()) {
@@ -234,6 +243,9 @@ void SchurVINS::Prediction(double _dt, const Eigen::Vector3d& _acc, const Eigen:
 }
 
 void SchurVINS::Solve3() {
+    const double effective_obs_dev = visualStddev(
+        obs_dev, focal_length, curr_state->gyr.norm());
+    const double effective_obs_invdev = 1.0 / effective_obs_dev;
     const int state_size = (int)states_map.size();
     if (state_size < 2) {
         LOG(INFO) << "only one window, bypass solve()";
@@ -352,7 +364,7 @@ void SchurVINS::Solve3() {
                 huber_scale = sqrt(rho1);
                 r *= huber_scale;
             }
-            r *= obs_invdev;
+            r *= effective_obs_invdev;
 
             // calc jacobian
             dr_dpc.setZero();
@@ -361,14 +373,15 @@ void SchurVINS::Solve3() {
                 double inv_norm = 1.0 / Pc_norm;
                 double inv_norm3 = 1.0 / (Pc_norm * Pc_norm * Pc_norm);
                 Eigen::Matrix3d norm_jacob = Eigen::Matrix3d::Identity() * inv_norm - Pc * Pc.transpose() * inv_norm3;
-                dr_dpc = feature->tan_space * norm_jacob * (focal_length * obs_invdev * huber_scale / level_scale);
+                dr_dpc = feature->tan_space * norm_jacob *
+                    (focal_length * effective_obs_invdev * huber_scale / level_scale);
             } else {
                 const double pc22 = Pc[2] * Pc[2];
                 dr_dpc(0, 0) = 1 / Pc[2];
                 dr_dpc(1, 1) = 1 / Pc[2];
                 dr_dpc(0, 2) = -Pc[0] / pc22;
                 dr_dpc(1, 2) = -Pc[1] / pc22;
-                dr_dpc *= (focal_length * obs_invdev * huber_scale / level_scale);
+                dr_dpc *= (focal_length * effective_obs_invdev * huber_scale / level_scale);
             }
 
             ++num_obs;
@@ -845,7 +858,10 @@ bool SchurVINS::StructureOptimize(const svo::PointPtr& optimize_point) {
     if (schur_pts_.count(optimize_point)) {
         const int min_idx = states_map.begin()->second->frame_bundle->getBundleId();
         const int max_idx = states_map.rbegin()->second->frame_bundle->getBundleId();
-        optimize_point->EkfUpdate(dsw_, obs_dev, focal_length, min_idx, max_idx, huberA, huberB);
+        const double effective_obs_dev = visualStddev(
+            obs_dev, focal_length, curr_state->gyr.norm());
+        optimize_point->EkfUpdate(dsw_, effective_obs_dev, focal_length,
+                                  min_idx, max_idx, huberA, huberB);
         // optimize_point->EkfUpdate(dsw_, obs_dev);
 
         return true;
