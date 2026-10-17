@@ -11,6 +11,7 @@
 // (All authors of SchurVINS are with PICO department of ByteDance Corporation)
 
 #include <svo/common/point.h>
+#include <svo/common/pixel_residual.h>
 
 #include <vikit/math_utils.h>
 #include <svo/common/logging.h>
@@ -362,6 +363,9 @@ void Point::EkfUpdate(const Eigen::VectorXd& dx, const double obs_std, const dou
         // calc residual
         Eigen::Vector2d r
             = (obs.head<2>() / obs.z() - Pc.head<2>() / Pc.z()) * (focal_length);  // unsupport unit sphere
+        Matrix2o3d pixel_jacobian;
+        if (pixelResidualEnabled() && !pixelResidual(*frame->cam_, obs, Pc, r, &pixel_jacobian))
+            continue;
         // LOG(ERROR) << "residual: " << r.transpose();
 
         // huber
@@ -383,6 +387,7 @@ void Point::EkfUpdate(const Eigen::VectorXd& dx, const double obs_std, const dou
         dr_dpc(0, 2) = -Pc[0] / pc22;
         dr_dpc(1, 2) = -Pc[1] / pc22;
         dr_dpc *= (focal_length * obs_invdev * huber_scale);
+        if (pixelResidualEnabled()) dr_dpc = pixel_jacobian * (obs_invdev * huber_scale);
 
         Matrix2o3d jf = Matrix2o3d::Zero();
         jf.noalias() = dr_dpc * R_c_w;

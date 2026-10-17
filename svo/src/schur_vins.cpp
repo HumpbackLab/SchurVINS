@@ -16,6 +16,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 
 #include <svo/common/local_feature.h>
 #include <svo/schur_vins.h>
+#include <svo/common/pixel_residual.h>
 
 #include <boost/math/distributions/chi_squared.hpp>
 #include <cmath>
@@ -156,7 +157,6 @@ void SchurVINS::PredictionState(const Eigen::Vector3d& acc, const Eigen::Vector3
     Eigen::Quaterniond dq_full = Eigen::Quaterniond(1, wd_full(0) / 2, wd_full(1) / 2, wd_full(2) / 2);
     dq_half.normalize();
     dq_full.normalize();
-
     const Eigen::Quaterniond q_half = curr_state->quat * dq_half;
     const Eigen::Quaterniond q_full = curr_state->quat * dq_full;
 
@@ -308,8 +308,13 @@ void SchurVINS::Solve3() {
                     reject_point = true;
                     break;
                 }
-                const Eigen::Vector2d residual =
+                Eigen::Vector2d residual =
                     (feature->xyz.head<2>() - Pc.head<2>() / Pc.z()) * focal_length;
+                if (svo::pixelResidualEnabled() && !svo::pixelResidual(
+                        *feature->frame->cam_, feature->xyz, Pc, residual)) {
+                    reject_point = true;
+                    break;
+                }
                 if (!residual.allFinite() || residual.norm() > pregate_px) {
                     reject_point = true;
                     break;
@@ -317,6 +322,26 @@ void SchurVINS::Solve3() {
             }
             if (reject_point)
                 continue;
+        }
+        if (svo::pixelResidualEnabled()) {
+            bool valid = true;
+            for (const auto& observation : curr_pt->local_obs_) {
+                const auto& feature = observation.second;
+                const int frame_id = feature->frame->bundleId();
+                const auto state = feature->state.lock();
+                if (!state || frame_id < min_frame_idx || frame_id > max_frame_idx)
+                    continue;
+                const auto& extrinsic = feature->camera_id == 0 ? T_imu_cam0 : T_imu_cam1;
+                const Eigen::Vector3d Pi = state->quat.inverse() * (curr_pt->pos() - state->pos);
+                const Eigen::Vector3d Pc = extrinsic.getEigenQuaternion().inverse() *
+                    (Pi - extrinsic.getPosition());
+                Eigen::Vector2d residual;
+                if (!svo::pixelResidual(*feature->frame->cam_, feature->xyz, Pc, residual)) {
+                    valid = false;
+                    break;
+                }
+            }
+            if (!valid) continue;
         }
         schur_pts_.insert(curr_pt);
         const Eigen::Vector3d& Pw = curr_pt->pos();
@@ -347,7 +372,11 @@ void SchurVINS::Solve3() {
             const double level_scale = 1;
 
             // calc residual
-            if (svo::LocalFeature::unit_sphere) {
+            Matrix2o3d pixel_jacobian;
+            if (svo::pixelResidualEnabled()) {
+                if (!svo::pixelResidual(*feature->frame->cam_, feature->xyz,
+                        Pc, r, &pixel_jacobian)) continue;
+            } else if (svo::LocalFeature::unit_sphere) {
                 r = feature->tan_space * (feature->xyz - Pc.normalized()) * (focal_length / level_scale);
             } else {
                 r = (feature->xyz.head<2>() - Pc.head<2>() / Pc.z()) * (focal_length / level_scale);
@@ -368,7 +397,9 @@ void SchurVINS::Solve3() {
 
             // calc jacobian
             dr_dpc.setZero();
-            if (svo::LocalFeature::unit_sphere) {
+            if (svo::pixelResidualEnabled()) {
+                dr_dpc = pixel_jacobian * (effective_obs_invdev * huber_scale);
+            } else if (svo::LocalFeature::unit_sphere) {
                 double Pc_norm = Pc.norm();
                 double inv_norm = 1.0 / Pc_norm;
                 double inv_norm3 = 1.0 / (Pc_norm * Pc_norm * Pc_norm);
@@ -772,7 +803,10 @@ void SchurVINS::Forward(const svo::FrameBundle::Ptr frame_bundle) {
             double deltaT = tmp_ts - curr_state->ts;
             CHECK(deltaT >= 0) << "deltaT: " << deltaT;
 
-            Prediction(deltaT, prev_acc, prev_gyr);
+            if (positiveEnv("SCHUR_IMU_MIDPOINT") > 0)
+                Prediction(deltaT, 0.5*(prev_acc+tmp_acc), 0.5*(prev_gyr+tmp_gyr));
+            else
+                Prediction(deltaT, prev_acc, prev_gyr);
 
             prev_acc = tmp_acc;
             prev_gyr = tmp_gyr;
@@ -786,7 +820,13 @@ void SchurVINS::Forward(const svo::FrameBundle::Ptr frame_bundle) {
             double w1 = dt_2 / (dt_1 + dt_2);
             double w2 = dt_1 / (dt_1 + dt_2);
 
-            Prediction(dt_1, prev_acc, prev_gyr);
+            if (positiveEnv("SCHUR_IMU_MIDPOINT") > 0) {
+                const Eigen::Vector3d end_acc = w1*prev_acc+w2*tmp_acc;
+                const Eigen::Vector3d end_gyr = w1*prev_gyr+w2*tmp_gyr;
+                Prediction(dt_1, 0.5*(prev_acc+end_acc), 0.5*(prev_gyr+end_gyr));
+            } else {
+                Prediction(dt_1, prev_acc, prev_gyr);
+            }
 
             prev_acc = w1 * prev_acc + w2 * tmp_acc;
             prev_gyr = w1 * prev_gyr + w2 * tmp_gyr;
@@ -929,7 +969,10 @@ int SchurVINS::RemovePointOutliers() {
             const double level_scale = 1;
 
             // calc residual
-            const Eigen::Vector2d r = (feature->xyz.head<2>() - Pc.head<2>() / Pc.z()) * (focal_length / level_scale);
+            Eigen::Vector2d r = (feature->xyz.head<2>() - Pc.head<2>() / Pc.z()) * (focal_length / level_scale);
+            if (svo::pixelResidualEnabled() && !svo::pixelResidual(
+                    *feature->frame->cam_, feature->xyz, Pc, r))
+                r.setConstant(std::numeric_limits<double>::infinity());
             total_error += r.norm();
             ++num_obs;
         }
@@ -972,8 +1015,11 @@ int SchurVINS::RemoveOutliers(const svo::FrameBundle::Ptr frame_bundle) {
                     continue;
 
                 const Eigen::Vector3d Pc = frame->T_f_w_ * curr_pt->pos();
-                const Eigen::Vector2d r
+                Eigen::Vector2d r
                     = (obs.head<2>() / obs.z() - Pc.head<2>() / Pc.z()) * (focal_length / level_scale);
+                if (svo::pixelResidualEnabled() && !svo::pixelResidual(
+                        *frame->cam_, obs, Pc, r))
+                    r.setConstant(std::numeric_limits<double>::infinity());
                 total_error += r.norm();
 
                 if (r.norm() > MAX_REPROJECT_ERROR) {
