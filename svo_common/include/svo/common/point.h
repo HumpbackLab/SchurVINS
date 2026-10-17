@@ -131,7 +131,7 @@ public:
 
   /// check
   bool CheckLocalStatus();
-  bool CheckLocalStatus(const int prev_frame_id0, const int prev_frame_id1, const int curr_framebundle_id);
+  bool CheckLocalStatus(const int prev_frame_id0, const int prev_frame_id1, const int curr_state_id);
 
   /// Remove observation via frame-ID and camera-ID.
   void RemoveLocalObs(const int state_id, const int camera_id);

@@ -59,8 +59,9 @@ bool Point::CheckLocalStatus() {
     return true;
 }
 
-bool Point::CheckLocalStatus(const int prev_frame_id0, const int prev_frame_id1, const int curr_framebundle_id) {
-    auto iter = local_obs_.find(curr_framebundle_id);
+bool Point::CheckLocalStatus(const int prev_frame_id0, const int prev_frame_id1, const int curr_state_id) {
+    // local_obs_ is keyed by augmented IMU state ID, not image bundle ID.
+    auto iter = local_obs_.find(curr_state_id);
     bool has_opt_prev = ((last_structure_optim_ == prev_frame_id0) || (last_structure_optim_ == prev_frame_id1));
     bool has_obs_curr = (iter != local_obs_.end());
 

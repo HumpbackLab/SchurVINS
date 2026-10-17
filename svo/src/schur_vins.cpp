@@ -282,7 +282,7 @@ void SchurVINS::Solve3() {
         }
 
         if (curr_pt->CheckStatus() == false || curr_pt->CheckLocalStatus() == false
-            || curr_pt->CheckLocalStatus(prev_frame_id0, prev_frame_id1, max_frame_idx) == false) {
+            || curr_pt->CheckLocalStatus(prev_frame_id0, prev_frame_id1, curr_state_id) == false) {
             // LOG(INFO) << "Solve2 pass invalid point: " << curr_pt->id()
             //           << " feature num : " << curr_pt->local_obs_.size() << " pos: " <<
             //           curr_pt->pos().transpose();
@@ -736,6 +736,14 @@ void SchurVINS::SetKeyframe(const bool _is_keyframe) {
 
 void SchurVINS::Forward(const svo::FrameBundle::Ptr frame_bundle) {
     constexpr double EPS = 1e-9;
+
+    // Failed visual initialization must not accumulate a running inertial state.
+    // Start each attempt from its own IMU interval until a pose clone is accepted.
+    if (states_map.empty() && curr_state->ts >= 0) {
+        *curr_state = ImuState();
+        prev_imu_ts = -1;
+        InitCov();
+    }
 
     // LOG(WARNING) << "schurvins Forward";
 
