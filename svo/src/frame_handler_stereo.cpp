@@ -11,6 +11,7 @@
 // (All authors of SchurVINS are with PICO department of ByteDance Corporation)
 
 #include <svo/frame_handler_stereo.h>
+#include <svo/schur_vins.h>
 #include <svo/map.h>
 #include <svo/common/frame.h>
 #include <svo/common/point.h>
@@ -30,6 +31,11 @@
 
 namespace svo {
 namespace {
+bool registerStereoPointsEnabled() {
+  const char* value = std::getenv("SCHUR_REGISTER_STEREO_POINTS");
+  return value == nullptr || std::string(value) == "1";
+}
+
 size_t rejectStereoEpipolarOutliers(const FrameBundlePtr& bundle,
                                    double max_error_px) {
   const FramePtr& left = bundle->at(0);
@@ -91,6 +97,9 @@ FrameHandlerStereo::FrameHandlerStereo(
       base_options, reprojector_options, depth_filter_options,
       feature_detector_options, init_options, tracker_options, stereo_camera)
 {
+  if (options_.use_imu)
+    LOG(INFO) << "Stereo landmark registration: "
+              << (registerStereoPointsEnabled() ? "enabled" : "disabled");
   // init initializer
   stereo_triangulation_.reset(
         new StereoTriangulation(
@@ -278,6 +287,8 @@ UpdateResult FrameHandlerStereo::makeKeyframe()
       map_->removeKeyframe(furthest_frame->id());
     }
   }
+  if (options_.use_imu && schur_vins_ && registerStereoPointsEnabled())
+    schur_vins_->RegisterCurrentFramePoints(new_frames_);
   return UpdateResult::kKeyframe;
 }
 

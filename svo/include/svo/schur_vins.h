@@ -50,6 +50,9 @@ class SchurVINS {
     void SetKeyframe(const bool _is_keyframe);
     void Forward(const svo::FrameBundle::Ptr frame_bundle);
     int Backward(const svo::FrameBundle::Ptr frame_bundle);
+
+    // Register landmarks created after Backward(), without cloning or solving again.
+    size_t RegisterCurrentFramePoints(const svo::FrameBundle::Ptr& frame_bundle);
     bool StructureOptimize(const svo::PointPtr& optimize_points);
 
    private:
@@ -85,7 +88,7 @@ class SchurVINS {
     // bool Chi2Check(const Eigen::MatrixXd& j, const Eigen::VectorXd& r, int dof);
     void StateCorrection(const Eigen::MatrixXd& K, const Eigen::MatrixXd& J, const Eigen::VectorXd& dX,
                          const Eigen::MatrixXd& R);
-    void RegisterPoints(const svo::FrameBundle::Ptr& frame_bundle);
+    void RegisterPoints(const svo::FrameBundle::Ptr& frame_bundle, bool skip_registered = false);
 
     void Solve3();
     int RemoveOutliers(const svo::FrameBundle::Ptr frame_bundle);

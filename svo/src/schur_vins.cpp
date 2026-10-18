@@ -689,7 +689,7 @@ bool SchurVINS::KeyframeSelect() {
     return delete_r2th;
 }
 
-void SchurVINS::RegisterPoints(const svo::FrameBundle::Ptr& frame_bundle) {
+void SchurVINS::RegisterPoints(const svo::FrameBundle::Ptr& frame_bundle, bool skip_registered) {
     CHECK(!states_map.empty());
     auto& state_ptr = states_map.rbegin()->second;
     const int state_id = state_ptr->id;
@@ -699,6 +699,14 @@ void SchurVINS::RegisterPoints(const svo::FrameBundle::Ptr& frame_bundle) {
         for (size_t i = 0; i < frame->numFeatures(); ++i) {
             svo::PointPtr point = frame->landmark_vec_[i];
             if (point != nullptr && svo::isCorner(frame->type_vec_[i])) {
+                if (skip_registered) {
+                    const auto range = point->local_obs_.equal_range(state_id);
+                    const bool registered = std::any_of(range.first, range.second, [&](const auto& entry) {
+                        return entry.second->camera_id == camera_id && entry.second->frame.get() == frame.get();
+                    });
+                    if (registered)
+                        continue;
+                }
                 const svo::LocalFeaturePtr ft
                     = std::make_shared<svo::LocalFeature>(state_ptr, point, frame, frame->f_vec_.col(i), camera_id);
                 ft->level = frame->level_vec_[i];
@@ -855,6 +863,15 @@ void SchurVINS::Forward(const svo::FrameBundle::Ptr frame_bundle) {
         //           << "bg: " << bg[0] << ", " << bg[1] << ", " << bg[2];
         // LOG(INFO) << "gravity: " << gravity[0] << ", " << gravity[1] << ", " << gravity[2];
     }
+}
+
+size_t SchurVINS::RegisterCurrentFramePoints(const svo::FrameBundle::Ptr& frame_bundle) {
+    if (states_map.empty() || states_map.rbegin()->second->frame_bundle.get() != frame_bundle.get())
+        return 0;
+
+    const size_t before = states_map.rbegin()->second->features.size();
+    RegisterPoints(frame_bundle, true);
+    return states_map.rbegin()->second->features.size() - before;
 }
 
 int SchurVINS::Backward(const svo::FrameBundle::Ptr frame_bundle) {
